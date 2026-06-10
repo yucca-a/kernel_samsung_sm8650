@@ -116,11 +116,24 @@ REL="$(cat "$OUT/include/config/kernel.release")"
 echo "    Image: $(stat -c%s "$IMG") bytes   release: $REL"
 
 # ---- KPM (resukisu only) ----
+# patch_linux is the SukiSU KPM ("核心") patcher: it rewrites Image -> oImage
+# with KPM support. Robust handling (mirrors the sm8550 tree): ensure the
+# patcher is executable (survives a lost exec bit), don't swallow its output,
+# and abort loudly if it fails or doesn't change the Image -- never publish an
+# un-patched Image as if KPM were applied.
 if [ "$MODE" = "resukisu" ]; then
   echo "=== KPM patch_linux ==="
-  ( cd "$(dirname "$IMG")" && cp -f "$HERE/patch_linux" ./patch_linux && ./patch_linux >/dev/null 2>&1 \
-      && mv -f oImage Image && rm -f patch_linux )
-  echo "    KPM-patched Image: $(stat -c%s "$IMG") bytes"
+  [ -f "$HERE/patch_linux" ] || { echo "[!] patch_linux missing at $HERE/patch_linux (needed for KPM)"; exit 1; }
+  kpm_pre="$(stat -c%s "$IMG")"
+  ( cd "$(dirname "$IMG")" \
+      && cp -f "$HERE/patch_linux" ./patch_linux \
+      && chmod +x ./patch_linux \
+      && ./patch_linux \
+      && mv -f oImage Image \
+      && rm -f ./patch_linux ) || { echo "[!] KPM patch_linux failed"; exit 1; }
+  kpm_post="$(stat -c%s "$IMG")"
+  echo "    KPM-patched Image: $kpm_post bytes (was $kpm_pre)"
+  [ "$kpm_post" != "$kpm_pre" ] || { echo "[!] KPM patch did not change the Image ($kpm_pre bytes) -- NOT applied"; exit 1; }
 fi
 
 # ---- pack (optional) ----
