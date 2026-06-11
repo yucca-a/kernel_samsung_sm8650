@@ -6,8 +6,8 @@
 #   build/build.sh [resukisu|lkm]
 #
 # Modes:
-#   resukisu (default)  built-in ReSukiSU + SUSFS + KPM + full feature set
-#   lkm                 pure kernel, no KSU/SUSFS/KPM (KSU injected at flash
+#   resukisu (default)  built-in ReSukiSU + SUSFS + full feature set
+#   lkm                 pure kernel, no KSU/SUSFS (KSU injected at flash
 #                       time by the manager app patching init_boot)
 #
 # Environment overrides:
@@ -84,9 +84,9 @@ COMMON_ENABLE="-e NTFS3_FS -e NTFS3_LZX_XPRESS -e ZRAM_DEF_COMP_LZ4 --set-str ZR
   -e IP_SET_HASH_NETIFACE -e IP_SET_LIST_SET"
 
 if [ "$MODE" = "resukisu" ]; then
-  MODE_CFG="-e KSU -e KSU_SUSFS -e KPM"
+  MODE_CFG="-e KSU -e KSU_SUSFS"
 else
-  MODE_CFG="-d KSU -d KSU_SUSFS -d KPM"
+  MODE_CFG="-d KSU -d KSU_SUSFS"
 fi
 
 # shellcheck disable=SC2086
@@ -100,7 +100,7 @@ fi
 make -j"$JOBS" O="$OUT" $MAKE_ARGS olddefconfig >/dev/null
 
 echo "=== config summary ==="
-for c in KSU KSU_SUSFS KPM NTFS3_FS ZRAM_DEF_COMP_LZ4 TCP_CONG_BBR NTSYNC IP6_NF_NAT REKERNEL POSIX_MQUEUE; do
+for c in KSU KSU_SUSFS NTFS3_FS ZRAM_DEF_COMP_LZ4 TCP_CONG_BBR NTSYNC IP6_NF_NAT REKERNEL POSIX_MQUEUE; do
   printf '    %-20s %s\n' "$c" "$(grep -q "^CONFIG_$c=y" "$OUT/.config" && echo y || echo n)"
 done
 printf '    %-20s %s\n' "baseband_guard" "$(grep -q baseband_guard "$OUT/.config" && echo y || echo n)"
@@ -115,26 +115,14 @@ IMG="$OUT/arch/arm64/boot/Image"
 REL="$(cat "$OUT/include/config/kernel.release")"
 echo "    Image: $(stat -c%s "$IMG") bytes   release: $REL"
 
-# ---- KPM (resukisu only) ----
-# patch_linux is the SukiSU KPM ("核心") patcher: it rewrites Image -> oImage
-# with KPM support. Robust handling (mirrors the sm8550 tree): ensure the
-# patcher is executable (survives a lost exec bit), don't swallow its output,
-# and abort loudly if it fails or doesn't change the Image -- never publish an
-# un-patched Image as if KPM were applied.
-if [ "$MODE" = "resukisu" ]; then
-  echo "=== KPM patch_linux ==="
-  [ -f "$HERE/patch_linux" ] || { echo "[!] patch_linux missing at $HERE/patch_linux (needed for KPM)"; exit 1; }
-  kpm_pre="$(stat -c%s "$IMG")"
-  ( cd "$(dirname "$IMG")" \
-      && cp -f "$HERE/patch_linux" ./patch_linux \
-      && chmod +x ./patch_linux \
-      && ./patch_linux \
-      && mv -f oImage Image \
-      && rm -f ./patch_linux ) || { echo "[!] KPM patch_linux failed"; exit 1; }
-  kpm_post="$(stat -c%s "$IMG")"
-  echo "    KPM-patched Image: $kpm_post bytes (was $kpm_pre)"
-  [ "$kpm_post" != "$kpm_pre" ] || { echo "[!] KPM patch did not change the Image ($kpm_pre bytes) -- NOT applied"; exit 1; }
-fi
+# ---- KPM: dropped ----
+# ReSukiSU upstream removed KPM support entirely (PR #226, merged 2026-06-06).
+# Since drivers/kernelsu is fetched from ReSukiSU @ main, builds no longer carry
+# the kernel-side KPM driver, so running patch_linux would only stamp an inert
+# patch onto the Image (and falsely log "KPM-patched"). We therefore no longer
+# patch the Image. resukisu mode ships KSU + SUSFS only. To bring KPM back,
+# switch fetch_kernelsu.sh to a KPM-capable source (e.g. SukiSU-Ultra) and
+# restore the patch_linux step.
 
 # ---- pack (optional) ----
 if [ "${PACK:-0}" = "1" ]; then
