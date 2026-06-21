@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 #
-# apply_features.sh -- apply the YuccaA feature set onto the clean sm8750 base.
+# apply_features.sh -- apply the YuccaA feature set onto the clean sm8650 base.
 #
 # Runs from the kernel source root. Driven by environment:
 #   MODE        resukisu (default) | lkm
 #   CACHE       directory for fetched upstream patch sources
-#   SUSFS_PIN   susfs4ksu commit to use (default 2df41de)
-#   WILD_PIN    WildKernels/kernel_patches commit (default 5a5d5d8)
+#   SUSFS_PIN           susfs4ksu commit to use
+#   SUPER_BUILDERS_PIN  Super-Builders commit to use for ZeroMount
+#   WILD_PIN            WildKernels/kernel_patches commit to use
 #
-# resukisu : KSU built-in + SUSFS + KPM + everything else
-# lkm      : pure kernel (no KSU/SUSFS/KPM); KSU is injected at flash time
+# resukisu : KSU built-in + SUSFS + ZeroMount + everything else
+# lkm      : pure kernel (no KSU/SUSFS/ZeroMount); KSU is injected at flash time
 #            by the KSU manager app patching init_boot. SUSFS must be OFF
 #            because fs/susfs.c references ksu_* symbols that only link with
 #            CONFIG_KSU=y.
@@ -19,8 +20,10 @@ MODE="${MODE:-resukisu}"
 CACHE="${CACHE:-$KROOT/.build_cache}"
 SUSFS_PIN="${SUSFS_PIN:-7bc8989feacd1ed262103aaf77ca120d02043e2a}"  # susfs4ksu gki-android14-6.1 tip (bumped 2026-06-03: SUS_PATH errno + mnt_id defaults)
 SUSFS_BRANCH="${SUSFS_BRANCH:-gki-android14-6.1}"
+SUPER_BUILDERS_PIN="${SUPER_BUILDERS_PIN:-c2cb71614868fe742cbffee2b6f3126523432673}" # android14-6.1 ReSukiSU ZeroMount
 WILD_PIN="${WILD_PIN:-5a5d5d8}"
 SUSFS_URL=https://github.com/ShirkNeko/susfs4ksu.git
+SUPER_BUILDERS_URL=https://github.com/Enginex0/Super-Builders.git
 WILD_URL=https://github.com/WildKernels/kernel_patches.git
 RESUKISU_SETUP=https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh
 BBG_SETUP=https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh
@@ -43,6 +46,20 @@ try_patch(){ # patchfile label
   else log "!SKIP $2"; fi
   find . -name '*.rej' -delete 2>/dev/null; find . -name '*.orig' -delete 2>/dev/null; }
 
+require_patch(){ # patchfile label
+  [ -f "$1" ] || { log "!miss $2"; exit 1; }
+  if /usr/bin/patch -p1 -R --dry-run -s -f --no-backup-if-mismatch <"$1" >/dev/null 2>&1; then
+    log "=already $2"
+  elif /usr/bin/patch -p1 --forward -F3 -s --no-backup-if-mismatch <"$1" >/dev/null 2>&1; then
+    log "+ok $2"
+  else
+    log "!FAIL $2"
+    find . -name '*.rej' -print
+    exit 1
+  fi
+  find . -name '*.rej' -delete 2>/dev/null; find . -name '*.orig' -delete 2>/dev/null
+}
+
 ############################################################
 log "1/7 ReSukiSU sources (KSU symlink must resolve at Kconfig time, even in lkm)"
 curl -LSs "$RESUKISU_SETUP" | bash -s main >/dev/null 2>&1
@@ -61,14 +78,19 @@ if [ "$MODE" = "resukisu" ]; then
     perl -0pi -e 's{#include <linux/mnt_idmapping.h>\n}{#include <linux/mnt_idmapping.h>\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux/susfs_def.h>\n#endif\n}' fs/namespace.c
     perl -0pi -e 's{#include "internal.h"\n}{#include "internal.h"\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */\n#endif\n}' fs/namespace.c
   fi
-  # susfs selinuxfs hunk wants original-KSU fake-selinux-status spoof symbols that
-  # ReSukiSU dropped; neutralise EVERY ref (global) so vmlinux links. The newer
-  # SUSFS commit also references ksu_selinux_hide_running, hence the 5th sub.
-  perl -0pi -e 's/&& ksu_selinux_hide_enabled\)/&& 0)/g; s/data = fake_status;/data = NULL;/g; s/static_branch_unlikely\(&fake_status_initialize_key\) && !ret && !fake_status/0/g; s/initialize_fake_status\(\);/(void)0;/g; s/!ksu_selinux_hide_running/1/g' security/selinux/selinuxfs.c
+  log "  Super-Builders ZeroMount patch @ $SUPER_BUILDERS_PIN"
+  clone_pin "$SUPER_BUILDERS_URL" "$SUPER_BUILDERS_PIN" "$CACHE/super_builders" || exit 1
+  SB_PATCHES="$CACHE/super_builders/android14-6.1/ReSukiSU/patches"
+  require_patch "$SB_PATCHES/60_zeromount-android14-6.1.patch" zeromount
+
+  # Keep ReSukiSU/SUSFS SELinux hide intact. ReSukiSU detects the SUSFS
+  # manual hook via kernel/tools/susfs_compat.mk and exposes the needed
+  # fake_status symbols from feature/selinux_hide.c.
   log "  susfs rejects: $(find . -name '*.rej'|wc -l); setresuid hook: $(grep -c ksu_handle_setresuid kernel/sys.c)"
   find . -name '*.rej' -delete 2>/dev/null; find . -name '*.orig' -delete 2>/dev/null
 else
   log "2/7 SUSFS skipped (lkm: pure kernel)"
+  log "  ZeroMount skipped (lkm: pure kernel)"
 fi
 
 log "3/7 Baseband-guard"
