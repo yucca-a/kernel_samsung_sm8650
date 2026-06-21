@@ -18,7 +18,7 @@ set +e
 KROOT="$(pwd)"
 MODE="${MODE:-resukisu}"
 CACHE="${CACHE:-$KROOT/.build_cache}"
-SUSFS_PIN="${SUSFS_PIN:-7bc8989feacd1ed262103aaf77ca120d02043e2a}"  # susfs4ksu gki-android14-6.1 tip (bumped 2026-06-03: SUS_PATH errno + mnt_id defaults)
+SUSFS_PIN="${SUSFS_PIN:-4a1e8311ae24bffb82c97b15945a7d94bf04cf90}"  # susfs4ksu gki-android14-6.1 tip (bumped 2026-06-21)
 SUSFS_BRANCH="${SUSFS_BRANCH:-gki-android14-6.1}"
 SUPER_BUILDERS_PIN="${SUPER_BUILDERS_PIN:-c2cb71614868fe742cbffee2b6f3126523432673}" # android14-6.1 ReSukiSU ZeroMount
 WILD_PIN="${WILD_PIN:-5a5d5d8}"
